@@ -15,7 +15,8 @@
 #       VITE_FIREBASE_STORAGE_BUCKET, VITE_FIREBASE_MESSAGING_SENDER_ID, VITE_FIREBASE_APP_ID
 #         – 6 giá trị trong Firebase console → Project settings → Your apps → Web app
 #  5. Vào tab Actions → Deploy to Firebase → Run workflow (hoặc push thêm 1 commit bất kỳ).
-#  6. Sau khi deploy: tạo dữ liệu mẫu bằng `npm run seed` (cần file .env),
+#  6. Sau khi deploy: dữ liệu mẫu (3 sản phẩm + cài đặt) TỰ ĐỘNG được nạp
+#     vào Firestore nếu DB còn trống. Việc còn lại làm trên điện thoại:
 #     tạo tài khoản admin (Authentication → Add user), rồi thêm UID vào
 #     Firestore → settings/store → adminUids. Đăng nhập tại /admin/login.
 
@@ -94,3 +95,8 @@ jobs:
           --only hosting,firestore:rules
           --project ${{ secrets.FIREBASE_PROJECT_ID }}
           --non-interactive
+
+      - name: Seed dữ liệu mẫu (chỉ khi Firestore còn trống)
+        run: |
+          npm install --no-save firebase-admin
+          GOOGLE_APPLICATION_CREDENTIALS=$HOME/sa.json node scripts/seed-admin.mjs
