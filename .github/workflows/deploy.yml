@@ -1,1 +1,96 @@
+# Beesy Store — deploy lên Firebase Hosting + Firestore rules.
+#
+# Cách dùng 100% trên điện thoại (không cần máy tính), giống các app khác của shop:
+#  1. Tạo repo mới trên github.com (điện thoại) — ví dụ tên "beesy-store".
+#  2. Trong repo: Add file → Create new file → đặt tên ".github/workflows/deploy.yml"
+#     → dán toàn bộ nội dung file này → Commit.
+#  3. Trong repo: Add file → Upload files → chọn file app.zip (source Beesy Store,
+#     đặt ở thư mục gốc, chỉ giữ 1 file zip) → Commit.
+#  4. Vào Settings → Secrets and variables → Actions → New repository secret,
+#     thêm các secret (lấy từ Firebase console trên điện thoại):
+#       FIREBASE_SERVICE_ACCOUNT  – toàn bộ JSON service account key
+#         (Firebase console → Project settings → Service accounts → Generate new private key)
+#       FIREBASE_PROJECT_ID       – ID của Firebase project Beesy Store
+#       VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, VITE_FIREBASE_PROJECT_ID,
+#       VITE_FIREBASE_STORAGE_BUCKET, VITE_FIREBASE_MESSAGING_SENDER_ID, VITE_FIREBASE_APP_ID
+#         – 6 giá trị trong Firebase console → Project settings → Your apps → Web app
+#  5. Vào tab Actions → Deploy to Firebase → Run workflow (hoặc push thêm 1 commit bất kỳ).
+#  6. Sau khi deploy: tạo dữ liệu mẫu bằng `npm run seed` (cần file .env),
+#     tạo tài khoản admin (Authentication → Add user), rồi thêm UID vào
+#     Firestore → settings/store → adminUids. Đăng nhập tại /admin/login.
 
+name: Deploy to Firebase
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Giải nén source (luôn dùng app.zip MỚI NHẤT)
+        run: |
+          ZIP="$(find . -path ./.git -prune -o -name '*.zip' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n 1 | cut -d' ' -f2-)"
+          if [ -n "$ZIP" ]; then
+            echo "Giải nén $ZIP (ghi đè source cũ nếu có) ..."
+            unzip -o "$ZIP"
+            rm -f "$ZIP"
+          fi
+          if [ ! -f package.json ]; then
+            echo "❌ LỖI: Không tìm thấy source (thiếu package.json) và không có file zip nào trong repo."
+            echo "👉 Upload file app.zip (source Beesy Store) vào thư mục gốc repo rồi chạy lại workflow."
+            exit 1
+          fi
+
+      - name: Cài Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Lưu service account key
+        run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > $HOME/sa.json
+
+      - name: Kiểm tra service account có thuộc đúng project không
+        run: |
+          SA_JSON="$HOME/sa.json"
+          SA_PROJECT="$(python3 -c "import json; print(json.load(open('$SA_JSON')).get('project_id',''))" 2>/dev/null)"
+          if [ -z "$SA_PROJECT" ]; then
+            echo "❌ LỖI: FIREBASE_SERVICE_ACCOUNT không phải JSON hợp lệ."
+            exit 1
+          fi
+          echo "Service account thuộc project: $SA_PROJECT"
+          if [ "$SA_PROJECT" != "${{ secrets.FIREBASE_PROJECT_ID }}" ]; then
+            echo "❌ LỆCH PROJECT: key thuộc '$SA_PROJECT' nhưng FIREBASE_PROJECT_ID là project khác."
+            exit 1
+          fi
+          echo "✅ Khớp project."
+
+      - name: Cài dependencies
+        run: npm ci
+
+      - name: Ghi file .env từ secrets
+        run: |
+          {
+            echo "VITE_FIREBASE_API_KEY=${{ secrets.VITE_FIREBASE_API_KEY }}"
+            echo "VITE_FIREBASE_AUTH_DOMAIN=${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}"
+            echo "VITE_FIREBASE_PROJECT_ID=${{ secrets.VITE_FIREBASE_PROJECT_ID }}"
+            echo "VITE_FIREBASE_STORAGE_BUCKET=${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}"
+            echo "VITE_FIREBASE_MESSAGING_SENDER_ID=${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}"
+            echo "VITE_FIREBASE_APP_ID=${{ secrets.VITE_FIREBASE_APP_ID }}"
+          } > .env
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy lên Firebase (Hosting + Firestore rules)
+        run: >
+          GOOGLE_APPLICATION_CREDENTIALS=$HOME/sa.json
+          npx -y firebase-tools@latest deploy
+          --only hosting,firestore:rules
+          --project ${{ secrets.FIREBASE_PROJECT_ID }}
+          --non-interactive
